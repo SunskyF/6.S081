@@ -121,6 +121,14 @@ found:
     return 0;
   }
 
+  // Set up kernel page table
+  p->kpagetable = kvmnew();
+  if(p->kpagetable == 0){
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+
   // Set up new context to start executing at forkret,
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));
@@ -141,7 +149,10 @@ freeproc(struct proc *p)
   p->trapframe = 0;
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
+  if(p->kpagetable)
+    kvmfree(p->kpagetable);
   p->pagetable = 0;
+  p->kpagetable = 0;
   p->sz = 0;
   p->pid = 0;
   p->parent = 0;
@@ -219,6 +230,7 @@ userinit(void)
   // allocate one user page and copy init's instructions
   // and data into it.
   uvminit(p->pagetable, initcode, sizeof(initcode));
+  uvminitk(p->kpagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
 
   // prepare for the very first "return" from kernel to user.
@@ -246,8 +258,12 @@ growproc(int n)
     if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
       return -1;
     }
+    if((sz = uvmalloc(p->kpagetable, sz, sz + n)) == 0) {
+      return -1;
+    }
   } else if(n < 0){
     sz = uvmdealloc(p->pagetable, sz, sz + n);
+    // sz = uvmdealloc(p->kpagetable, sz, sz + n);
   }
   p->sz = sz;
   return 0;
@@ -269,6 +285,13 @@ fork(void)
 
   // Copy user memory from parent to child.
   if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
+    freeproc(np);
+    release(&np->lock);
+    return -1;
+  }
+
+  // Copy user memory from parent to child.
+  if(uvmcopy(p->kpagetable, np->kpagetable, PGSIZE) < 0){
     freeproc(np);
     release(&np->lock);
     return -1;
@@ -471,14 +494,18 @@ scheduler(void)
         // Switch to chosen process.  It is the process's job
         // to release its lock and then reacquire it
         // before jumping back to us.
+        w_satp(MAKE_SATP(p->kpagetable));
+        sfence_vma();
+
         p->state = RUNNING;
         c->proc = p;
+
         swtch(&c->context, &p->context);
 
         // Process is done running for now.
         // It should have changed its p->state before coming back.
         c->proc = 0;
-
+        kvminithart();
         found = 1;
       }
       release(&p->lock);
