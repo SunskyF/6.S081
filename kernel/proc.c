@@ -122,8 +122,9 @@ found:
   }
 
   // Set up kernel page table
-  p->kpagetable = kvmnew();
+  p->kpagetable = kvmcreate();
   if(p->kpagetable == 0){
+    panic("kpagetable create");
     freeproc(p);
     release(&p->lock);
     return 0;
@@ -230,7 +231,7 @@ userinit(void)
   // allocate one user page and copy init's instructions
   // and data into it.
   uvminit(p->pagetable, initcode, sizeof(initcode));
-  uvminitk(p->kpagetable, initcode, sizeof(initcode));
+  // uvminitk(p->kpagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
 
   // prepare for the very first "return" from kernel to user.
@@ -241,6 +242,7 @@ userinit(void)
   p->cwd = namei("/");
 
   p->state = RUNNABLE;
+  kvmmapuser(p->pagetable, p->kpagetable, 0, p->sz);
 
   release(&p->lock);
 }
@@ -254,17 +256,18 @@ growproc(int n)
   struct proc *p = myproc();
 
   sz = p->sz;
+
+  if (sz + n >= PLIC)
+    return -1;
+  
   if(n > 0){
     if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
       return -1;
     }
-    if((sz = uvmalloc(p->kpagetable, sz, sz + n)) == 0) {
-      return -1;
-    }
   } else if(n < 0){
     sz = uvmdealloc(p->pagetable, sz, sz + n);
-    // sz = uvmdealloc(p->kpagetable, sz, sz + n);
   }
+  kvmmapuser(p->pagetable, p->kpagetable, p->sz, sz);
   p->sz = sz;
   return 0;
 }
@@ -290,12 +293,6 @@ fork(void)
     return -1;
   }
 
-  // Copy user memory from parent to child.
-  if(uvmcopy(p->kpagetable, np->kpagetable, PGSIZE) < 0){
-    freeproc(np);
-    release(&np->lock);
-    return -1;
-  }
   np->sz = p->sz;
 
   np->parent = p;
@@ -317,6 +314,8 @@ fork(void)
   pid = np->pid;
 
   np->state = RUNNABLE;
+
+  kvmmapuser(np->pagetable, np->kpagetable, 0, np->sz);
 
   release(&np->lock);
 
@@ -499,7 +498,6 @@ scheduler(void)
 
         p->state = RUNNING;
         c->proc = p;
-
         swtch(&c->context, &p->context);
 
         // Process is done running for now.
