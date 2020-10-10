@@ -1,0 +1,27 @@
+RISC-V assembly:
+1. Which registers contain arguments to functions? For example, which register holds 13 in main's call to printf?
+a1, a2 ...
+a2
+
+2. Where is the call to function f in the assembly code for main? Where is the call to g? (Hint: the compiler may inline functions.)
+call to f:
+26:	45b1                	li	a1,12
+
+call to g:
+14:	250d                	addiw	a0,a0,3
+
+3. At what address is the function printf located?
+0x630
+
+4. What value is in the register ra just after the jalr to printf in main?
+38
+
+5. Run the following code.
+HE110 World
+e100 is the hex of 57616, if big-endian, the value should be e100,0000
+0x00646c72: 
+    64: d, 6c: l, 72 r 
+
+6. In the following code, what is going to be printed after
+x=3 y=5221
+the address of arg2 is random
