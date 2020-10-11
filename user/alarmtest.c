@@ -21,9 +21,9 @@ void slow_handler();
 int
 main(int argc, char *argv[])
 {
-  // test0();
+  test0();
   test1();
-  // test2();
+  test2();
   exit(0);
 }
 
@@ -100,7 +100,7 @@ test1()
     // occurred; another is that that registers may not be
     // restored correctly, causing i or j or the address of j
     // to get an incorrect value.
-    printf("\ntest1 failed: foo() executed fewer times than it was called: i: %d, j: %d\n", i, j);
+    printf("\ntest1 failed: foo() executed fewer times than it was called\n");
   } else {
     printf("test1 passed\n");
   }

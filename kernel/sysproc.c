@@ -114,6 +114,7 @@ uint64
 sys_sigreturn(void)
 {
   struct proc *p = myproc();
-  p->trapframe->epc = p->alarm_epc;
+  p->alarm_state = 0;
+  *p->trapframe = p->alarm_trapframe;
   return 0;
 }

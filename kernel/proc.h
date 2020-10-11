@@ -96,7 +96,8 @@ struct proc {
   int interval;
   void (*handler)(void);
   int tick_count;
-  uint64 alarm_epc;
+  struct trapframe alarm_trapframe; // data page for trampoline.S
+  int alarm_state;
   
   // these are private to the process, so p->lock need not be held.
   uint64 kstack;               // Virtual address of kernel stack

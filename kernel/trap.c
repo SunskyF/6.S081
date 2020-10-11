@@ -77,11 +77,11 @@ usertrap(void)
     exit(-1);
 
   if (which_dev == 2) {
-    printf("timer: %p\n", p->trapframe->epc);
     p->tick_count += 1;
-    if (p->interval != 0 && p->tick_count % p->interval == 0) {
+    if (p->interval != 0 && p->alarm_state == 0 && p->tick_count % p->interval == 0) {
+      p->alarm_state = 1;
       p->tick_count = 0;
-      p->alarm_epc = p->trapframe->epc + 4;
+      p->alarm_trapframe = *p->trapframe;
       p->trapframe->epc = (uint64) p->handler;
     }
     // give up the CPU if this is a timer interrupt.
