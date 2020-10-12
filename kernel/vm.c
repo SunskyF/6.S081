@@ -5,6 +5,8 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "proc.h"
 
 /*
  * the kernel's page table.
@@ -96,15 +98,30 @@ walkaddr(pagetable_t pagetable, uint64 va)
 {
   pte_t *pte;
   uint64 pa;
+  struct proc *p = myproc();
 
   if(va >= MAXVA)
     return 0;
-
   pte = walk(pagetable, va, 0);
-  if(pte == 0)
-    return 0;
-  if((*pte & PTE_V) == 0)
-    return 0;
+
+  if(pte == 0) {
+    if (va < p->sz && va > p->trapframe->sp) {
+      pte = walk(pagetable, va, 0);
+    } else 
+      return 0;
+  }
+  if((*pte & PTE_V) == 0){
+    if (va < p->sz && va > p->trapframe->sp) {
+      uint64 ka = (uint64) kalloc();
+      if (ka == 0) {
+        p->killed = 1;
+      } else {
+        memset((void*) ka, 0, PGSIZE);
+        *pte = PA2PTE(ka) |PTE_W|PTE_U|PTE_R| PTE_V;
+      }
+    } else 
+      return 0;
+  }
   if((*pte & PTE_U) == 0)
     return 0;
   pa = PTE2PA(*pte);
@@ -181,9 +198,9 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 
   for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
     if((pte = walk(pagetable, a, 0)) == 0)
-      panic("uvmunmap: walk");
+      continue;
     if((*pte & PTE_V) == 0)
-      panic("uvmunmap: not mapped");
+      continue;
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
     if(do_free){
@@ -315,9 +332,9 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
-      panic("uvmcopy: pte should exist");
+      continue;
     if((*pte & PTE_V) == 0)
-      panic("uvmcopy: page not present");
+      continue;
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
     if((mem = kalloc()) == 0)
@@ -439,4 +456,27 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+void print(pagetable_t pagetable, int level) {
+  // there are 2^9 = 512 PTEs in a page table.
+  if (level > 2) return;
+  for(int i = 0; i < 512; i++){
+    pte_t pte = pagetable[i];
+    if (pte & PTE_V){
+      // this PTE points to a lower-level page table.
+      uint64 child = PTE2PA(pte);
+      for (int j = 0; j < level; j++) {
+        printf(".. ");
+      }
+      printf("..");
+      printf("%d: pte %p pa %p\n", i, pte, child);
+      print((pagetable_t)child, level + 1);
+    }
+  }
+}
+
+void vmprint(pagetable_t pagetable) {
+  printf("page table %p\n", pagetable);
+  print(pagetable, 0);
 }
