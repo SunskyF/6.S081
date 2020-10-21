@@ -73,6 +73,8 @@ kfree(void *pa)
   kupdate_ref((uint64) pa, 0);
 
   int idx = (uint64) pa / PGSIZE;
+  if (reference.cnt[idx] < 0)
+    panic("ref < 0");
   if (reference.cnt[idx] > 0) return;
 
   // Fill with junk to catch dangling refs.
