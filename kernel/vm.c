@@ -269,7 +269,6 @@ uvmcowupdate(pagetable_t pagetable, uint64 va)
   
   pa = PTE2PA(*pte);
   if ((mem = kalloc()) == 0) {
-    panic("no free pa");
     return -1;
   }
   memmove(mem, (char*) pa, PGSIZE);
