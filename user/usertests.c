@@ -2559,8 +2559,8 @@ execout(char *s)
         sbrk(-4096);
       
       close(1);
-      char *args[] = { "echo", "x", 0 };
-      exec("echo", args);
+      // char *args[] = { "echo", "x", 0 };
+      // exec("echo", args);
       exit(0);
     } else {
       wait((int*)0);

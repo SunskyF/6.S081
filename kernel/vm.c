@@ -5,7 +5,8 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
-
+#include "spinlock.h"
+#include "proc.h"
 /*
  * the kernel's page table.
  */
@@ -251,6 +252,38 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
   return newsz;
 }
 
+int
+uvmcowupdate(pagetable_t pagetable, uint64 va)
+{
+  pte_t *pte;
+  uint64 pa;
+  char *mem;
+
+  if((pte = walk(pagetable, va, 0)) == 0)
+    panic("uvmcowupdate: pte should exist");
+  
+  if (!(*pte & PTE_C)) {
+    panic("not cow page");
+    return -1;
+  }
+  
+  pa = PTE2PA(*pte);
+  if ((mem = kalloc()) == 0) {
+    panic("no free pa");
+    return -1;
+  }
+  memmove(mem, (char*) pa, PGSIZE);
+
+  va = PGROUNDDOWN(va);
+  uvmunmap(pagetable, va, 1, 1);
+  if(mappages(pagetable, va, PGSIZE, (uint64)mem, PTE_W|PTE_X|PTE_R|PTE_U) != 0){
+    panic("mappages error");
+    kfree(mem);
+    return -1;
+  }
+  return 0;
+}
+
 // Deallocate user pages to bring the process size from oldsz to
 // newsz.  oldsz and newsz need not be page-aligned, nor does newsz
 // need to be less than oldsz.  oldsz can be larger than the actual
@@ -311,15 +344,15 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
-
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
       panic("uvmcopy: pte should exist");
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
     *pte &= ~PTE_W;
+    *pte |= PTE_C;
     pa = PTE2PA(*pte);
+    kupdate_ref(pa, 1);
     flags = PTE_FLAGS(*pte);
     if(mappages(new, i, PGSIZE, pa, flags) != 0){
       goto err;
@@ -352,12 +385,18 @@ int
 copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
   uint64 n, va0, pa0;
+  pte_t *pte;
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
     pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0)
       return -1;
+    pte = walk(pagetable, va0, 0);
+    if (*pte & PTE_C) {
+      uvmcowupdate(pagetable, va0);
+      pa0 = walkaddr(pagetable, va0);
+    }
     n = PGSIZE - (dstva - va0);
     if(n > len)
       n = len;
