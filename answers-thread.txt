@@ -1,0 +1,21 @@
+NBUCKET: 5
+    thread 1    thread 2
+key     1           6
+
+insert key to the same bucket
+root->...
+
+thread 1 create a entry e1
+thread 2 create a entry e2
+
+insert e1 and e2 to the same root
+e1->root->...
+and 
+e2->root->...
+
+*p = e; may be exeucted at the same time.
+table[i] = e1
+and 
+table[i] = e2
+
+As as result, one entry has been missed.
