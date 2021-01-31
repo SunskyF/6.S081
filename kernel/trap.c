@@ -2,9 +2,13 @@
 #include "param.h"
 #include "memlayout.h"
 #include "riscv.h"
+#include "defs.h"
 #include "spinlock.h"
 #include "proc.h"
-#include "defs.h"
+#include "fcntl.h"
+#include "fs.h"
+#include "sleeplock.h"
+#include "file.h"
 
 struct spinlock tickslock;
 uint ticks;
@@ -67,6 +71,56 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
+  } else if (r_scause() == 13 || r_scause() == 15) {
+    // load page fault or store page fault
+    uint64 va = r_stval();
+    if (va > p->sz) {
+      p->killed = 1;
+    } else if (va < p->trapframe->sp) {
+      p->killed = 1;
+    } else {
+      struct vma *vma_p;
+      int i;
+      for (i = 0; i < NOMMAP; i++) {
+        vma_p = &p->vmas[i];
+        if (vma_p->valid == 1 && va >= vma_p->addr && va < vma_p->addr + vma_p->length)
+          break;
+      }
+      if (i != NOMMAP) {
+        uint64 ka = (uint64) kalloc();
+        if (ka == 0) {
+          p->killed = 1;
+        } else {
+          memset((void*) ka, 0, PGSIZE);
+          va = PGROUNDDOWN(va);
+
+          int offset = va - vma_p->addr;
+          ilock(vma_p->f->ip);
+          if(readi(vma_p->f->ip, 0, ka, offset, PGSIZE) == 0)
+            panic("trap: readi");
+          iunlock(vma_p->f->ip);
+
+          
+          int permission = PTE_U;
+          if ((vma_p->permissions & PROT_NONE) == 0) {
+            if ((vma_p->permissions & PROT_READ) && vma_p->f->readable) {
+              permission |= PTE_R;
+            }
+            if ((vma_p->permissions & PROT_WRITE) && (vma_p->f->writable || (vma_p->flags & MAP_PRIVATE))) {
+              permission |= PTE_W;
+            }
+            if (vma_p->permissions & PROT_EXEC) {
+              permission |= PTE_X;
+            }
+          }
+          
+          if (mappages(p->pagetable, va, PGSIZE, ka, permission) != 0) {
+            kfree((void*) ka);
+            p->killed = 1;
+          }
+        }
+      }
+    }
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());

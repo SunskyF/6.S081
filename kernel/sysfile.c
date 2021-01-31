@@ -484,3 +484,83 @@ sys_pipe(void)
   }
   return 0;
 }
+
+
+uint64 sys_mmap(void) {
+  int fd, offset, length;
+  int prot, flags;
+  uint64 addr;
+  struct file *f;
+  
+  if(argaddr(0, &addr) < 0 || argint(1, &length) < 0 || argfd(4, &fd, &f) < 0 || argint(5, &offset) < 0)
+    return -1;
+  if(argint(2, &prot) < 0 || argint(3, &flags) < 0)
+    return -1;
+  
+  if (flags & MAP_SHARED) {
+    if (!(f->writable) && (prot & PROT_WRITE)) {
+      return -1;
+    }
+  }
+
+  struct proc *p = myproc();
+
+  int i;
+  for(i = 0; i < NOMMAP; i++){
+    if(p->vmas[i].valid == 0){
+      p->vmas[i].valid = 1;
+      p->vmas[i].addr = p->sz;
+      p->vmas[i].length = length;
+      p->vmas[i].permissions = prot;
+      p->vmas[i].flags = flags;
+      p->vmas[i].f = f;
+      filedup(f);
+      break;
+    }
+  }
+  if (i == NOMMAP)
+    return -1;
+
+  p->sz += length;
+  return p->vmas[i].addr;
+}
+
+
+
+uint64 sys_munmap(void) {
+  uint64 addr;
+  int length;
+
+  if(argaddr(0, &addr) < 0 || argint(1, &length) < 0)
+    return -1;
+
+  struct proc *p = myproc();
+
+  int i;
+  for(i = 0; i < NOMMAP; i++){
+    if(p->vmas[i].valid == 1 && addr >= p->vmas[i].addr && addr < p->vmas[i].addr + p->vmas[i].length){
+      if (p->vmas[i].flags & MAP_SHARED) {
+        filewriteoffset(p->vmas[i].f, addr, length, addr - p->vmas[i].addr);
+      }
+      int unmap_size = length;
+      if (addr + length == p->vmas[i].addr + p->vmas[i].length) {
+        p->vmas[i].length -= unmap_size;
+        p->sz -= unmap_size;
+      } else if (addr == p->vmas[i].addr) {
+        p->vmas[i].addr += unmap_size;
+        p->vmas[i].length -= unmap_size;
+      }
+
+      uvmunmap(p->pagetable, PGROUNDUP(addr), unmap_size / PGSIZE, 1);
+      if (p->vmas[i].length == 0) {
+        p->vmas[i].valid = 0;
+        fileclose(p->vmas[i].f);
+      }
+      break;
+    }
+  }
+  if (i == NOMMAP)
+    return -1;
+
+  return 0;
+}

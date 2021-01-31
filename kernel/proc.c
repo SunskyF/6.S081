@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fcntl.h"
 
 struct cpu cpus[NCPU];
 
@@ -274,6 +275,13 @@ fork(void)
     return -1;
   }
 
+  for(int i = 0; i < NOMMAP; i++){
+    if (p->vmas[i].valid) {
+      np->vmas[i] = p->vmas[i];
+      filedup(np->vmas[i].f);
+    }
+  }
+
   // Copy user memory from parent to child.
   if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
     freeproc(np);
@@ -343,6 +351,31 @@ exit(int status)
 
   if(p == initproc)
     panic("init exiting");
+
+  for(int i = 0; i < NOMMAP; i++){
+    uint64 addr = p->vmas[i].addr;
+    int length = p->vmas[i].length;
+    if(p->vmas[i].valid == 1) {
+      if (p->vmas[i].flags & MAP_SHARED) {
+        filewriteoffset(p->vmas[i].f, addr, length, addr - p->vmas[i].addr);
+      }
+      int unmap_size = length;
+
+      if (addr + length == p->vmas[i].addr + p->vmas[i].length) {
+        p->vmas[i].length -= unmap_size;
+        p->sz -= unmap_size;
+      } else if (addr == p->vmas[i].addr) {
+        p->vmas[i].addr += unmap_size;
+        p->vmas[i].length -= unmap_size;
+      }
+
+      uvmunmap(p->pagetable, PGROUNDUP(addr), unmap_size / PGSIZE, 1);
+      if (p->vmas[i].length == 0) {
+        p->vmas[i].valid = 0;
+        fileclose(p->vmas[i].f);
+      }
+    }
+  }
 
   // Close all open files.
   for(int fd = 0; fd < NOFILE; fd++){
