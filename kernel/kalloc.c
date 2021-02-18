@@ -36,14 +36,12 @@ kinit()
   freerange(end, (void*)PHYSTOP);
 }
 
-void kupdate_ref(uint64 pa, int inc) {
+void incref(uint64 pa) {
   int idx = (uint64) pa / PGSIZE;
   acquire(&reference.lock);
-  if (inc) {
-    reference.cnt[idx]++;
-  } else {
-    reference.cnt[idx]--;
-  }
+  if (reference.cnt[idx] < 1)
+    panic("incref");
+  reference.cnt[idx]++;
   release(&reference.lock);
 }
 
@@ -53,7 +51,7 @@ freerange(void *pa_start, void *pa_end)
   char *p;
   p = (char*)PGROUNDUP((uint64)pa_start);
   for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE) {
-    kupdate_ref((uint64) p, 1);
+    reference.cnt[(uint64) p / PGSIZE]++;
     kfree(p);
   }
 }
@@ -70,12 +68,17 @@ kfree(void *pa)
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
   
-  kupdate_ref((uint64) pa, 0);
-
+  acquire(&reference.lock);
   int idx = (uint64) pa / PGSIZE;
-  if (reference.cnt[idx] < 0)
+  reference.cnt[idx]--;
+  int cnt = reference.cnt[idx];
+  if (cnt < 0)
     panic("ref < 0");
-  if (reference.cnt[idx] > 0) return;
+  
+  if (cnt > 0) {
+    release(&reference.lock);
+    return;
+  }
 
   // Fill with junk to catch dangling refs.
   memset(pa, 1, PGSIZE);
@@ -86,6 +89,7 @@ kfree(void *pa)
   r->next = kmem.freelist;
   kmem.freelist = r;
   release(&kmem.lock);
+  release(&reference.lock);
 }
 
 // Allocate one 4096-byte page of physical memory.
@@ -100,6 +104,8 @@ kalloc(void)
   r = kmem.freelist;
   if(r) {
     kmem.freelist = r->next;
+    if (reference.cnt[(uint64) r / PGSIZE] != 0)
+      panic("ref: cnt != 0 when alloc");
     reference.cnt[(uint64) r / PGSIZE] = 1;
   }
   release(&kmem.lock);

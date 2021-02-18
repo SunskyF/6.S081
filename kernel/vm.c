@@ -255,6 +255,8 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
 int
 uvmcowupdate(pagetable_t pagetable, uint64 va)
 {
+  if (va > MAXVA)
+    return -1;
   pte_t *pte;
   uint64 pa;
   char *mem;
@@ -262,24 +264,18 @@ uvmcowupdate(pagetable_t pagetable, uint64 va)
   if((pte = walk(pagetable, va, 0)) == 0)
     panic("uvmcowupdate: pte should exist");
   
-  if (!(*pte & PTE_C)) {
-    panic("not cow page");
+  if ((*pte & PTE_U) == 0 || (*pte & PTE_V) == 0)
     return -1;
-  }
-  
+
   pa = PTE2PA(*pte);
   if ((mem = kalloc()) == 0) {
     return -1;
   }
-  memmove(mem, (char*) pa, PGSIZE);
+  memmove((void*)mem, (void*)pa, PGSIZE);
 
-  va = PGROUNDDOWN(va);
-  uvmunmap(pagetable, va, 1, 1);
-  if(mappages(pagetable, va, PGSIZE, (uint64)mem, PTE_W|PTE_X|PTE_R|PTE_U) != 0){
-    panic("mappages error");
-    kfree(mem);
-    return -1;
-  }
+  kfree((void*)pa);
+
+  *pte = PA2PTE((uint64)mem) | (PTE_V|PTE_W|PTE_X|PTE_R|PTE_U);
   return 0;
 }
 
@@ -351,7 +347,7 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
     *pte &= ~PTE_W;
     *pte |= PTE_C;
     pa = PTE2PA(*pte);
-    kupdate_ref(pa, 1);
+    incref(pa);
     flags = PTE_FLAGS(*pte);
     if(mappages(new, i, PGSIZE, pa, flags) != 0){
       goto err;
@@ -388,14 +384,20 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
-    pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
+    if (va0 > MAXVA)
       return -1;
     pte = walk(pagetable, va0, 0);
-    if (*pte & PTE_C) {
-      uvmcowupdate(pagetable, va0);
-      pa0 = walkaddr(pagetable, va0);
+
+    if(pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0)
+      return -1;
+
+    if ((*pte & PTE_W) == 0) {
+      if (uvmcowupdate(pagetable, va0) < 0) 
+        return -1;
     }
+
+    pa0 = PTE2PA(*pte);
+
     n = PGSIZE - (dstva - va0);
     if(n > len)
       n = len;
